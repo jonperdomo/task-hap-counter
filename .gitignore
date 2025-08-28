@@ -1,0 +1,4 @@
+src/*.egg-info
+src/hap_counter/__pycache__/
+tests/__pycache__/
+tests/test_output/

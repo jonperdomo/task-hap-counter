@@ -1,0 +1,11 @@
+name: hap-counter
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pysam
+  - cyvcf2
+  - pandas
+  - pytest
