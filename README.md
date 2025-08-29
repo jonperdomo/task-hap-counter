@@ -15,9 +15,11 @@ hap-counter
 ├─ src/
 │  └─ hap-counter/
 │     ├─ __init__.py
+│     ├─ cli.py           # entry point
 │     ├─ counting.py      # counter for SNV read support per haplotype
+│     ├─ save_to_tsv.py   # saves results in TSV format
 ├─ tests/
-│  ├─ conftest.py         # creates SNV VCF for unit tests
+│  ├─ conftest.py         # creates VCF for unit tests
 │  └─ test_counter.py     # unit tests for SNV counting on synthetic reads
 ```
 
