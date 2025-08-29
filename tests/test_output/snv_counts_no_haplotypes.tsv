@@ -1,0 +1,4 @@
+chrom	pos	h1_REF	h1_ALT	h2_REF	h2_ALT	REF	ALT
+chr1	1	10	2	0	0	A	T
+chr1	6	10	2	0	0	C	G
+chr1	12	10	2	0	0	T	C

@@ -1,4 +1,6 @@
 src/*.egg-info
 src/hap_counter/__pycache__/
 tests/__pycache__/
-tests/test_output/
+tests/test_output/*.vcf.gz
+tests/test_output/*.vcf.gz.tbi
+*.out

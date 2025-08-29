@@ -1,14 +1,7 @@
-import pysam
-import pytest
-import tempfile
 import os
+import pysam
 
-
-print("Testing environment variables")
-import os, sys; print("PYTHONPATH=", os.getenv("PYTHONPATH")); print(sys.path[:5])
-
-
-from hap_counter import count_snvs
+from hap_counter import count_snvs, save_counts_to_tsv
 
 def create_synthetic_bam(ref_seq, reads):
     """
@@ -63,29 +56,24 @@ def create_snv_read(ref_seq, position, alt=False, haplotype=None, alt_base=None)
             raise ValueError(f"Alt base equals reference base for SNV at position {position}")
 
         read['seq'] = read['seq'][:position] + alt_base + read['seq'][position + 1:]
-        print("Added SNV read at position", position, "with ref", read['reference'], "and alt", alt_base, ", and seq", read['seq'])
+        print("Added SNV read at position", position, " ref", read['reference'], " alt", alt_base, ", seq", read['seq'], "haplotype", haplotype)
 
     return read
 
 
 def test_snv_counting_no_haplotype(ref_seq, snv_vcf, snv_positions):
     """Test bi-allelic SNV counting without haplotype information."""
-    # Create a VCF file with the SNVs
-    test_outdir = os.path.join(os.getcwd(), "tests/test_output")
-    if not os.path.exists(test_outdir):
-        os.makedirs(test_outdir)
-
-    reads = []
 
     # Loop through SNV positions and create reads
+    reads = []
     snv_counts = {}
     alt_allele_count = 2
     ref_allele_count = 2
     for pos, ref, alt in snv_positions:
         # Create read allele support
-        for i in range(alt_allele_count):
+        for _ in range(alt_allele_count):
             reads.append(create_snv_read(ref_seq, pos-1, alt=True, haplotype=None, alt_base=alt))
-        for j in range(ref_allele_count):
+        for _ in range(ref_allele_count):
             reads.append(create_snv_read(ref_seq, pos-1, alt=False, haplotype=None))
 
         snv_counts[(pos, ref, alt, None)] = (alt_allele_count, ref_allele_count)
@@ -100,60 +88,67 @@ def test_snv_counting_no_haplotype(ref_seq, snv_vcf, snv_positions):
     bam_path = create_synthetic_bam(ref_seq, reads)
     print("[debug] created synthetic BAM:", bam_path)
     try:
-        snv_counts = count_snvs(bam_path, snv_vcf, "chr1")
+        snv_counts = count_snvs(bam_path, snv_vcf)
+
+        # Save to TSV
+        test_outdir = os.path.join(os.getcwd(), "tests/test_output")
+        output_file = os.path.join(test_outdir, "snv_counts_no_haplotypes.tsv")
+        save_counts_to_tsv(snv_counts, output_file)
 
         # Print the results
-        print("SNV counts (no haplotype):")
+        snv_counts = snv_counts.get("chr1", {})
+        print("SNV counts (no haplotype tags):")
         for key, count in snv_counts.items():
             print(f"  {key}: {count}")
 
-        # Create a snv_counts with the solution for testing
-        snv_counts = {
-            (4, 'A', 'T', None): 2,
-            (9, 'C', 'G', None): 1
-        }
-
-        assert snv_counts[(4, 'A', 'T', None)] == 2
-        assert snv_counts[(9, 'C', 'G', None)] == 1
+        assert snv_counts[(1, 'A', 'T')] == {"ref1": 10, "alt1": 2, "ref2": 0, "alt2": 0}
+        assert snv_counts[(6, 'C', 'G')] == {"ref1": 10, "alt1": 2, "ref2": 0, "alt2": 0}
+        assert snv_counts[(12, 'T', 'C')] == {"ref1": 10, "alt1": 2, "ref2": 0, "alt2": 0}
     finally:
         os.remove(bam_path)
         os.remove(bam_path + ".bai")
 
-# def test_snv_counting_with_haplotype(ref_seq, snv_vcf):
-#     """Test bi-allelic SNV counting with haplotype information."""
+def test_snv_counting_with_haplotype(ref_seq, snv_vcf, snv_positions):
+    """Test bi-allelic SNV counting with haplotype information."""
 
-#     reads = []
+    # Loop through SNV positions and create reads
+    reads = []
+    alt_allele_count = 2
+    ref_allele_count = 2
 
-#     # Create 4 alt alleles in position 4 (A>T)
-#     for i in range(4):
-#         reads.append(create_snv_read(ref_seq, 4, alt=True, haplotype=1))
+    # Create read support for each haplotype
+    for pos, ref, alt in snv_positions:
+        for haplotype in [1, 2]:
+            # Create read allele support
+            for _ in range(alt_allele_count):
+                reads.append(create_snv_read(ref_seq, pos-1, alt=True, haplotype=haplotype, alt_base=alt))
 
-#     # Create 5 alt alleles in position 9 (C>G)
-#     for i in range(5):
-#         reads.append(create_snv_read(ref_seq, 9, alt=True, haplotype=2))
+            # Create ref allele support
+            for _ in range(ref_allele_count):
+                reads.append(create_snv_read(ref_seq, pos-1, alt=False, haplotype=haplotype))
 
-#     # Create 3 alt alleles in position 11 (T>G)
-#     for i in range(3):
-#         reads.append(create_snv_read(ref_seq, 11, alt=True, haplotype=1))
+            print(f"[debug] Created {alt_allele_count} alt reads for SNV at position {pos} ({ref}>{alt}), haplotype {haplotype}")
 
-#     # Create 8 ref reads
-#     for i in range(4):
-#         reads.append(create_snv_read(ref_seq, 0, alt=False, haplotype=1))
-#     for i in range(4):
-#         reads.append(create_snv_read(ref_seq, 0, alt=False, haplotype=2))
+    bam_path = create_synthetic_bam(ref_seq, reads)
+    print("[debug] created synthetic BAM:", bam_path)
+    try:
+        snv_counts = count_snvs(bam_path, snv_vcf)
 
-#     bam_path = create_synthetic_bam(ref_seq, reads)
-#     try:
-#         # snv_counts = count_snvs(bam_path, fasta_path, "chr1")
-#         # Create a snv_counts with the solution for testing
-#         snv_counts = {
-#             (4, 'A', 'T', 1): 1,
-#             (9, 'C', 'T', 2): 2
-#         }
+        # Save to TSV
+        test_outdir = os.path.join(os.getcwd(), "tests/test_output")
+        output_file = os.path.join(test_outdir, "snv_counts_with_haplotypes.tsv")
+        save_counts_to_tsv(snv_counts, output_file)
 
-#         # Example assertion, adjust according to your count_snvs implementation
-#         assert snv_counts[(4, 'A', 'T', 1)] == 1
-#         assert snv_counts[(9, 'C', 'T', 2)] == 2
-#     finally:
-#         os.remove(bam_path)
-#         os.remove(bam_path + ".bai")
+        # Print the results
+        snv_counts = snv_counts.get("chr1", {})
+        print("SNV counts (with haplotype tags):")
+        for key, count in snv_counts.items():
+            print(f"  {key}: {count}")
+
+        assert snv_counts[(1, 'A', 'T')] == {"ref1": 10, "alt1": 2, "ref2": 10, "alt2": 2}
+        assert snv_counts[(6, 'C', 'G')] == {"ref1": 10, "alt1": 2, "ref2": 10, "alt2": 2}
+        assert snv_counts[(12, 'T', 'C')] == {"ref1": 10, "alt1": 2, "ref2": 10, "alt2": 2}
+
+    finally:
+        os.remove(bam_path)
+        os.remove(bam_path + ".bai")

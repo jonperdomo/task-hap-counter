@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from collections import defaultdict
 from typing import Dict, Iterator, Optional, Tuple
 
@@ -11,7 +9,6 @@ Key = Tuple[int, str, str, Optional[int]]  # (pos1, REF, ALT, HP or None)
 def count_snvs(
     bam_path: str,
     vcf_path: str,
-    chrom: str,
     *,
     min_mapq: int = 0,
     min_baseq: int = 0,
@@ -29,28 +26,42 @@ def count_snvs(
         - Primary alignments only (skips secondary/supplementary/unmapped).
         - CIGAR ops that don't place a base on the reference at the site (D/N, etc.) are ignored.
     """
+    print("[debug] BAM file:", bam_path)
+    print("[debug] VCF file:", vcf_path)
+
     bam = pysam.AlignmentFile(bam_path, "rb")
     vcf = pysam.VariantFile(vcf_path)
+    chroms_in_vcf = list(vcf.header.contigs)
+    chroms_in_bam = list(bam.references)
+    common_chroms = set(chroms_in_vcf) & set(chroms_in_bam)
+    if not common_chroms:
+        print("[warning] No common chromosomes between BAM and VCF")
+        return {}
 
-    counts: Dict[Key, int] = defaultdict(int)
+    print("[debug] Number of VCF records:", sum(1 for _ in vcf))
+    vcf.seek(0)  # Reset VCF file pointer
+    print("[debug] Number of BAM records:", sum(1 for _ in bam))
+    bam.seek(0)  # Reset BAM file pointer
 
-    def iter_alt_obs() -> Iterator[Key]:
+    chr_counts = {}
+    for chrom in common_chroms:
+        counts: Dict[Key, list[int]] = defaultdict(lambda: [0, 0])  # [ref_count, alt_count]
+
         # Iterate SNVs on this chromosome from the VCF
         for rec in vcf.fetch(chrom):
+
             # bi-allelic SNV with A/C/G/T only
             if len(rec.alts or ()) != 1:
-                print("[debug] skipping non-biallelic SNV")
+                # print("[debug] skipping non-biallelic SNV")
                 continue
             ref = rec.ref.upper()
             alt = rec.alts[0].upper()
 
-            # print("[debug] ref:", ref, ", alt:", alt, ", pos:", rec.pos)
-
             if len(ref) != 1 or len(alt) != 1:
-                print("[debug] skipping non-biallelic SNV")
+                # print("[debug] skipping non-biallelic SNV")
                 continue
             if ref not in "ACGT" or alt not in "ACGT":
-                print("[debug] skipping non-ACGT SNV")
+                # print("[debug] skipping non-ACGT SNV")
                 continue
 
             pos1 = rec.pos  # VCF is 1-based
@@ -66,7 +77,7 @@ def count_snvs(
                 max_depth=max_depth,
             ):
                 if col.reference_pos != start0:
-                    print("[debug] skipping non-matching pileup")
+                    # print("[debug] skipping non-matching pileup")
                     continue
 
                 for pr in col.pileups:
@@ -74,41 +85,63 @@ def count_snvs(
 
                     # Only primary, mapped reads
                     if rd.is_unmapped or rd.is_secondary or rd.is_supplementary:
-                        print("[debug] skipping non-primary read")
+                        # print("[debug] skipping non-primary read")
                         continue
                     if rd.mapping_quality < min_mapq:
-                        print("[debug] skipping low mapping quality read")
+                        # print("[debug] skipping low mapping quality read")
                         continue
                     if pr.is_del or pr.is_refskip:
-                        print("[debug] skipping deletion or reference skip")
+                        # print("[debug] skipping deletion or reference skip")
                         continue  # no base here
 
                     qpos = pr.query_position  # 1-based
                     if qpos is None:
-                        print("[debug] skipping unmapped read")
+                        # print("[debug] skipping unmapped read")
                         continue
 
                     # Base/qual filters
                     qb = rd.query_sequence[qpos].upper()  # Sequence is 0-based
                     if min_baseq and rd.query_qualities is not None:
                         if rd.query_qualities[qpos] < min_baseq:
-                            print("[debug] skipping low base quality read")
+                            # print("[debug] skipping low base quality read")
                             continue
 
-                    # Count only ALT-supporting observations
-                    if qb == alt or qb == ref:
-                        hp: Optional[int] = None
-                        if rd.has_tag(hp_tag):
-                            try:
-                                hp = int(rd.get_tag(hp_tag))
-                            except Exception:
-                                hp = None
-                        yield (pos1, ref, qb, hp)
-                        
+                    hp = None
+                    if rd.has_tag(hp_tag):
+                        try:
+                            hp = int(rd.get_tag(hp_tag))
+                            # print("[debug] Read haplotype tag:", hp, " for pos", pos1, "with ref", ref, "and read base", qb)
+                        except Exception:
+                            hp = None
 
-    for key in iter_alt_obs():
-        counts[key] += 1
+                    key: Key = (pos1, ref, alt, hp)
+                    if qb == ref:
+                        counts[key][0] += 1  # Increment REF count for haplotype
+                    elif qb == alt:
+                        counts[key][1] += 1  # Increment ALT count for haplotype
+
+        chr_counts[chrom] = counts
 
     vcf.close()
     bam.close()
-    return dict(counts)
+
+    # Convert keys from (pos1, ref, alt, hp) to (pos1, ref, alt) with values as
+    # counts for ref1, alt1, ref2, alt2
+    chr_final_counts = {}
+    for chrom, counts in chr_counts.items():
+        final_counts = defaultdict(lambda: {"ref1": 0, "alt1": 0, "ref2": 0, "alt2": 0})
+        for (pos1, ref, alt, hp), (ref_count, alt_count) in counts.items():
+            if hp == 1:
+                final_counts[(pos1, ref, alt)]["ref1"] += ref_count
+                final_counts[(pos1, ref, alt)]["alt1"] += alt_count
+            elif hp == 2:
+                final_counts[(pos1, ref, alt)]["ref2"] += ref_count
+                final_counts[(pos1, ref, alt)]["alt2"] += alt_count
+            elif hp is None:
+                final_counts[(pos1, ref, alt)]["ref1"] += ref_count
+                final_counts[(pos1, ref, alt)]["alt1"] += alt_count
+                final_counts[(pos1, ref, alt)]["ref2"] = 0
+                final_counts[(pos1, ref, alt)]["alt2"] = 0
+        chr_final_counts[chrom] = final_counts
+
+    return chr_final_counts
