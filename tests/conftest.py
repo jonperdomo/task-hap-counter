@@ -1,4 +1,5 @@
 # tests/conftest.py
+import os
 import pysam
 import pytest
 from pathlib import Path
@@ -21,9 +22,11 @@ def snv_vcf(tmp_path_factory, snv_positions):
       chr1:12 T>C
     Returns path to bgzipped VCF (*.vcf.gz).
     """
-    d = tmp_path_factory.mktemp("snv_vcf")
-    vcf_txt = Path(d) / "snvs.vcf"
-    with vcf_txt.open("w") as f:
+    test_outdir = os.path.join(os.getcwd(), "tests/test_output")
+    os.makedirs(test_outdir, exist_ok=True)
+    vcf_txt = os.path.join(test_outdir, "snvs.vcf")
+    print("[debug] Creating synthetic VCF:", vcf_txt)
+    with open(vcf_txt, "w") as f:
         f.write("##fileformat=VCFv4.2\n")
         f.write("#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\n")
         for pos, ref, alt in snv_positions:
